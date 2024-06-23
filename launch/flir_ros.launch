@@ -1,0 +1,12 @@
+<launch>
+    <node pkg="flir_ros" name="flir_ros" type="flir_ros_node" output="screen">
+        <param name="frameID"  value="flirCamera" />
+        <param name="cameraSerialNo" value="23015063" />
+        <param name="exposureMode" value="auto" />
+        <param name="frameRate" value="15" />
+        <param name="exposureTime" value="15" />
+        <param name="maxExposureTime" value="20" />
+        <param name="triggerMode" value="software" />
+    </node>
+
+</launch>

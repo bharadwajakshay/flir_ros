@@ -1,6 +1,6 @@
-#include <flir_ros2/flir_ros2.hpp>
+#include "flir_ros/flir_ros.hpp"
 
-void flirROS2::setExposure(){
+void flirROS::setExposure(){
     Spinnaker::GenApi::INodeMap &nodeMap = this->camera_->GetNodeMap();
 
     if(this->exposureMode_ == AUTOMATIC){
@@ -12,12 +12,12 @@ void flirROS2::setExposure(){
             }
         }
         else
-            RCLCPP_ERROR(this->get_logger(),"Failed to set Exposure to automatic mode");
+            ROS_ERROR("Failed to set Exposure to automatic mode");
 
         // to avoid motion blur set the maximum exposure time
         Spinnaker::GenApi::CFloatPtr ptrExposureTime = nodeMap.GetNode("ExposureTime");
         if (!Spinnaker::GenApi::IsReadable(ptrExposureTime)){
-            RCLCPP_ERROR(this->get_logger(),"Failed to get Max Exposure value for the camera");
+            ROS_ERROR("Failed to get Max Exposure value for the camera");
             return;
         }
 
@@ -29,7 +29,7 @@ void flirROS2::setExposure(){
             ptrMaxExposureTime->SetValue(maxExposureTime);
         }
         else
-            RCLCPP_ERROR(this->get_logger(),"Failed to set upperLimit for auto exposure");
+            ROS_ERROR("Failed to set upperLimit for auto exposure");
 
     }
     else{
@@ -40,10 +40,10 @@ void flirROS2::setExposure(){
         if (Spinnaker::GenApi::IsReadable(ptrExposureTime) && Spinnaker::GenApi::IsWritable(ptrExposureTime))
             ptrExposureTime->SetValue(exposureTime);
         else
-            RCLCPP_ERROR(this->get_logger(),"Failed to set exposure value to %f",exposureTime);
+            ROS_ERROR("Failed to set exposure value to %f",exposureTime);
     }
 }
 
-void flirROS2::setPixelFormat(){
+void flirROS::setPixelFormat(){
     
 }

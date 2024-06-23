@@ -1,71 +1,86 @@
-#  ----------------------------------------------------------------------------
-#  2020 Bernd Pfrommer bernd.pfrommer@gmail.com
-#
-cmake_minimum_required(VERSION 3.5)
-project(flir_ros2)
+cmake_minimum_required(VERSION 3.0.2)
+project(flir_ros)
 
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-
-set(Boost_USE_STATIC_LIBS OFF) 
-set(Boost_USE_MULTITHREADED ON)  
-set(Boost_USE_STATIC_RUNTIME OFF) 
-
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
-endif()
-
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE RelWithDebInfo)
-endif()
+## Compile as C++11, supported in ROS Kinetic and newer
+#add_compile_options(-std=c++11)
 
 # the spinnaker SDK does not provide a cmake file
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
+message(STATUS "The CMAKE_MODULE_PATH= ${CMAKE_MODULE_PATH}")
+find_package(SPINNAKER QUIET)
+message(STATUS
+  "Found variable: ${SPINNAKER_FOUND} at ${SPINNAKER_LIBRARIES} and ${SPINNAKER_INCLUDE_DIRS}")
 
-# find dependencies
-find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_auto REQUIRED)
-find_package(ament_cmake_ros REQUIRED)
-find_package(Boost REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(rclcpp_components REQUIRED)
-find_package(sensor_msgs REQUIRED)
-find_package(std_msgs REQUIRED)
-find_package(camera_info_manager REQUIRED)
-find_package(image_transport REQUIRED)
+set(SPINNAKER_WAS_DOWNLOADED FALSE)
+if(NOT SPINNAKER_FOUND)
+  message(STATUS "spinnaker not found")
+  message(STATUS "libSpinnaker not found in system library path")
+  include(cmake/DownloadSpinnaker.cmake)
+  download_spinnaker(SPINNAKER_LIBRARIES SPINNAKER_INCLUDE_DIRS)
+  set(SPINNAKER_WAS_DOWNLOADED TRUE)
+else()
+  message(STATUS "spinnaker SDK found installed")
+endif()
+
+message(STATUS "libSpinnaker library location: ${SPINNAKER_LIBRARIES}")
+message(STATUS "libSpinnaker include location: ${SPINNAKER_INCLUDE_DIRS}")
+
 find_package(SPINNAKER REQUIRED)
+
+
+## Find catkin macros and libraries
+## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
+## is used, also find other catkin packages
+find_package(catkin REQUIRED COMPONENTS
+  camera_info_manager
+  diagnostic_updater
+  dynamic_reconfigure
+  image_transport
+  roscpp
+  sensor_msgs
+  std_msgs
+  wfov_camera_msgs
+)
+find_package(Boost REQUIRED COMPONENTS system)
+
 find_package(OpenCV REQUIRED)
 
-include_directories(${Boost_INCLUDE_DIRS} include ${OpenCV_INCLUDE_DIRS}) 
-
-add_executable(flir_ros2
-  src/flirROS2.cpp
-  src/flirROS2Drivers.cpp
-  src/flirROS2Utilities.cpp
+generate_dynamic_reconfigure_options(
+  config/camera.cfg
 )
 
-ament_target_dependencies(flir_ros2 
-  rclcpp 
-  std_msgs 
-  rclcpp_components 
-  sensor_msgs
-  camera_info_manager 
-  image_transport
-  Boost
-  SPINNAKER
-  OpenCV)
-
-# target_link_libraries(flir_ros2 PRIVATE Spinnaker::Spinnaker ${Boost_LIBRARIES})
-
-target_include_directories(flir_ros2
-  PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  ${rclcpp_LIBRARIES}
+catkin_package(
+  INCLUDE_DIRS include
+  LIBRARIES flir_ros
+  CATKIN_DEPENDS camera_info_manager diagnostic_updater dynamic_reconfigure image_transport roscpp sensor_msgs std_msgs wfov_camera_msgs
+ # DEPENDS system_lib
 )
 
-install(TARGETS
-flir_ros2
-DESTINATION lib/${PROJECT_NAME})
+###########
+## Build ##
+###########
+
+## Specify additional locations of header files
+## Your package locations should be listed before other locations
+include_directories(
+ include
+  ${catkin_INCLUDE_DIRS}
+  ${Spinnaker_INCLUDE_DIRS}
+)
+
+## Declare a C++ executable
+add_executable(${PROJECT_NAME}_node src/main.cpp 
+                                    src/flir_ros_driver.cpp
+                                    src/filr_ros_utils.cpp)
+
+
+## Add cmake target dependencies of the executable
+## same as for the library above
+add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+## Specify libraries to link a library or executable target against
+target_link_libraries(${PROJECT_NAME}_node
+  ${catkin_LIBRARIES}
+  ${Spinnaker_LIBRARIES}
+)
 

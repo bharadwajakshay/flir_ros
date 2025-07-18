@@ -15,8 +15,11 @@ flirROS::flirROS(ros::NodeHandle node, ros::NodeHandle pnh):
 
     if (!camInitialization){
         ROS_ERROR("The specified camera was not found. Killing the ROS driver");
-        /************************** TODO *******************/
-        // display all the serial numbers of all the cameras found
+        for (int camIdx=0; camIdx<this->cameraList_.GetSize(); camIdx++){
+            auto cam = this->cameraList_.GetByIndex(camIdx);
+            std::string sn = this->getCameraSerialNo(cam);
+            ROS_WARN("Detected camera with serial: %s", sn.c_str());
+        }
         exit(-1);
     }
 
@@ -26,6 +29,11 @@ flirROS::flirROS(ros::NodeHandle node, ros::NodeHandle pnh):
         ROS_ERROR("Error setting the trigger mode of the camera");
         exit(0);
     }
+
+    // dynamic reconfig                        
+    reconfigServer_ = std::make_shared<ReconfigureServer>();
+    ReconfigureServer::CallbackType cb = boost::bind(&flirROS::dynamicReconfigCallback, this, _1, _2);
+    //reconfigServer_->setCallback(cb);
 
     this->configureCamera();
 
@@ -92,7 +100,7 @@ void flirROS::readParameters(ros::NodeHandle& node){
     else if(this->triggerModeStr_ == "software")
         this->triggerMode_ = SOFTWARE;
     else if(this->triggerModeStr_ == "hardware")
-        this->triggerMode_ == HARDWARE;
+        this->triggerMode_ = HARDWARE;
     else{
         ROS_ERROR("Undefined option for trigger: %s. Resorting to continous trigger.",this->triggerModeStr_.c_str());
         this->triggerMode_ = CONTINOUS;
@@ -256,11 +264,13 @@ bool flirROS::setCameraTriggerMode(triggerModeValues mode){
 
 void flirROS::configureCamera(){
     ROS_INFO("Configuring the camera");
+    this->configureGigESettings();
+    this->configureBandwidthAllocation();
     this->setExposure();
     this->setPixelFormat();
 }
 
-void flirROS::softwareTriggerCamera(){
+/*void flirROS::softwareTriggerCamera(){
     if (!camera_){
         ROS_ERROR("No camera is running. Unable to trigger an image.\nExiting!!!");
         exit(-1);
@@ -277,6 +287,24 @@ void flirROS::softwareTriggerCamera(){
     else{
         ROS_ERROR("Failed to trigger an image.\nExiting!!!");
         exit(-1);
+    }
+}*/
+void flirROS::softwareTriggerCamera() {
+    if (!camera_) {
+        ROS_ERROR("No camera is running. Unable to trigger an image.");
+        return;
+    }
+    
+    Spinnaker::GenApi::INodeMap & nodeMap = camera_->GetNodeMap();
+    Spinnaker::GenApi::CCommandPtr ptrSWTrigger = nodeMap.GetNode("TriggerSoftware");
+
+    if(Spinnaker::GenApi::IsWritable(ptrSWTrigger)) {
+        ptrSWTrigger->Execute();
+        captureTime_ = ros::Time::now();
+        getImage(); // Call directly instead of spawning a thread
+    }
+    else {
+        ROS_ERROR("Failed to trigger an image.");
     }
 }
 
@@ -335,4 +363,79 @@ void flirROS::synchronisedImageCapture(const std_msgs::Bool::Ptr msg){
 void flirROS::triggerTimerCallback(const ros::TimerEvent& event){
     ROS_DEBUG("Recieved the trigger from trigger timer");
     this->softwareTriggerCamera();
+}
+
+void flirROS::configureGigESettings() {
+    // Get GigE transport layer node map
+    Spinnaker::GenApi::INodeMap& nodeMapTLDevice = camera_->GetTLDeviceNodeMap();
+    
+    // Configure packet size to optimize for GigE
+    Spinnaker::GenApi::CIntegerPtr ptrPacketSize = nodeMapTLDevice.GetNode("GevSCPSPacketSize");
+    if (Spinnaker::GenApi::IsAvailable(ptrPacketSize) && Spinnaker::GenApi::IsWritable(ptrPacketSize)) {
+        const int64_t packetSize = 9000; // Jumbo frames
+        ptrPacketSize->SetValue(packetSize);
+        ROS_INFO("Packet size set to %d", (int)packetSize);
+    }
+    
+    // Configure packet delay to prevent packet collisions between cameras
+    Spinnaker::GenApi::CIntegerPtr ptrPacketDelay = nodeMapTLDevice.GetNode("GevSCPD");
+    if (Spinnaker::GenApi::IsAvailable(ptrPacketDelay) && Spinnaker::GenApi::IsWritable(ptrPacketDelay)) {
+        // Set different packet delays for each camera based on serial number
+        int64_t packetDelay = (std::stoi(cameraSerialNo_) % 4) * 5000;
+        ptrPacketDelay->SetValue(packetDelay);
+        ROS_INFO("Packet delay set to %d", (int)packetDelay);
+    }
+}
+
+void flirROS::configureBandwidthAllocation() {
+    // Get stream parameters node map
+    Spinnaker::GenApi::INodeMap& sNodeMap = camera_->GetTLStreamNodeMap();
+    
+    // Enable stream bandwidth allocation
+    Spinnaker::GenApi::CBooleanPtr ptrDeviceStreamChannelPacketResend = sNodeMap.GetNode("StreamPacketResendEnable");
+    if (Spinnaker::GenApi::IsAvailable(ptrDeviceStreamChannelPacketResend) && 
+        Spinnaker::GenApi::IsWritable(ptrDeviceStreamChannelPacketResend)) {
+        ptrDeviceStreamChannelPacketResend->SetValue(true);
+        ROS_INFO("Enabled packet resend");
+    }
+    
+    // Set stream buffer count to 20 (or higher if needed)
+    Spinnaker::GenApi::CBooleanPtr ptrStreamBufferCountMode = sNodeMap.GetNode("StreamBufferCountMode");
+    if (Spinnaker::GenApi::IsWritable(ptrStreamBufferCountMode)) {
+        ptrStreamBufferCountMode->SetValue(true); // Enable manual mode
+    }
+
+    Spinnaker::GenApi::CIntegerPtr ptrBufferCount = sNodeMap.GetNode("StreamBufferCountManual");
+    if (Spinnaker::GenApi::IsWritable(ptrBufferCount)) {
+        ptrBufferCount->SetValue(30); // You can tune this number
+        ROS_INFO("StreamBufferCountManual set to 30");
+    } else {
+        ROS_WARN("StreamBufferCountManual not writable");
+    }
+
+
+    // Set stream buffer handling mode
+    Spinnaker::GenApi::CEnumerationPtr ptrStreamBufferHandlingMode = sNodeMap.GetNode("StreamBufferHandlingMode");
+    if (Spinnaker::GenApi::IsAvailable(ptrStreamBufferHandlingMode) && 
+        Spinnaker::GenApi::IsWritable(ptrStreamBufferHandlingMode)) {
+        Spinnaker::GenApi::CEnumEntryPtr ptrStreamBufferHandlingModeNewest = 
+            ptrStreamBufferHandlingMode->GetEntryByName("NewestOnly");
+        if (Spinnaker::GenApi::IsAvailable(ptrStreamBufferHandlingModeNewest) && 
+            Spinnaker::GenApi::IsReadable(ptrStreamBufferHandlingModeNewest)) {
+            ptrStreamBufferHandlingMode->SetIntValue(ptrStreamBufferHandlingModeNewest->GetValue());
+            ROS_INFO("Set buffer handling mode to NewestOnly");
+        }
+    }
+}
+
+
+void flirROS::dynamicReconfigCallback(flir_ros::cameraConfig &config, uint32_t level) {
+    this->exposureMode_ = (config.exposure_mode == "AUTOMATIC") ? AUTOMATIC : MANUAL;
+    this->exposureTime_ = config.exposure_time;
+    this->maxExposureTime_ = config.auto_exposure_time_upper_limit;
+    this->gain_ = config.gain;
+
+    this->setExposure();  // Apply new exposure settings
+    this->setGain();      // Create similar to setExposure()
+    ROS_INFO("Dynamic reconfigure applied.");
 }

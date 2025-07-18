@@ -17,6 +17,7 @@
 #include <image_transport/image_transport.h>
 #include <camera_info_manager/camera_info_manager.h>
 #include <std_msgs/Bool.h>
+#include <dynamic_reconfigure/server.h>
 
 // OpenCV 
 #include <opencv2/opencv.hpp>
@@ -42,7 +43,7 @@ class flirROS{
         Spinnaker::ImageProcessor imgProc_;
 
         // Image time out for grabbing the next image
-        uint64_t imageTimeout_ = 100;
+        uint64_t imageTimeout_ = 1000;
 
         std::string frameID_;
         std::string cameraSerialNo_;
@@ -60,6 +61,8 @@ class flirROS{
 
         int exposureTime_ = 15; // in millisec
         int maxExposureTime_ = 40; // in millisec
+        double gain_;
+
 
         enum exposureModeValues
         {
@@ -78,6 +81,11 @@ class flirROS{
         std::shared_ptr<image_transport::ImageTransport> it_;
         ros::Time captureTime_;
 
+        //Dynamic reconfiguration
+        // Add in class definition
+        typedef dynamic_reconfigure::Server<flir_ros::cameraConfig> ReconfigureServer;
+        std::shared_ptr<ReconfigureServer> reconfigServer_;
+
         void publishImage(Spinnaker::ImagePtr img);
         void declareParameters(ros::NodeHandle& node);
         void readParameters(ros::NodeHandle& node);
@@ -87,9 +95,16 @@ class flirROS{
         void softwareTriggerCamera();
         void synchronisedImageCapture(const std_msgs::Bool::Ptr msg);
         void getImage();
-        void setExposure();
-        void setPixelFormat();
         void configureCamera();
         void triggerTimerCallback(const ros::TimerEvent& event);
+        void configureGigESettings(); 
+        void configureBandwidthAllocation();
+
+        void setGain();
+        void setExposure();
+        void setPixelFormat();
+
+        void dynamicReconfigCallback(flir_ros::cameraConfig &config, uint32_t level);
+
 
 };

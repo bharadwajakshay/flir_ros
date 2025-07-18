@@ -1,14 +1,15 @@
 #include "flir_ros/flir_ros.hpp"
 
-void flirROS::setExposure(){
+void flirROS::setExposure() {
     Spinnaker::GenApi::INodeMap &nodeMap = this->camera_->GetNodeMap();
 
-    if(this->exposureMode_ == AUTOMATIC){
+    if(this->exposureMode_ == AUTOMATIC) {
         Spinnaker::GenApi::CEnumerationPtr ptrExposureAuto = nodeMap.GetNode("ExposureAuto");
-        if (Spinnaker::GenApi::IsReadable(ptrExposureAuto) && Spinnaker::GenApi::IsWritable(ptrExposureAuto)){
+        if (Spinnaker::GenApi::IsReadable(ptrExposureAuto) && Spinnaker::GenApi::IsWritable(ptrExposureAuto)) {
             Spinnaker::GenApi::CEnumEntryPtr ptrExposureAutoOn = ptrExposureAuto->GetEntryByName("Continuous");
-            if(Spinnaker::GenApi::IsReadable(ptrExposureAutoOn)){
+            if(Spinnaker::GenApi::IsReadable(ptrExposureAutoOn)) {
                 ptrExposureAuto->SetIntValue(ptrExposureAutoOn->GetValue());
+                ROS_INFO("Set exposure to auto mode");
             }
         }
         else
@@ -16,34 +17,64 @@ void flirROS::setExposure(){
 
         // to avoid motion blur set the maximum exposure time
         Spinnaker::GenApi::CFloatPtr ptrExposureTime = nodeMap.GetNode("ExposureTime");
-        if (!Spinnaker::GenApi::IsReadable(ptrExposureTime)){
+        if (!Spinnaker::GenApi::IsReadable(ptrExposureTime)) {
             ROS_ERROR("Failed to get Max Exposure value for the camera");
             return;
         }
 
         const double maxAllowedExposureTime = ptrExposureTime->GetMax();
-        const double maxExposureTime = ((this->maxExposureTime_*100.0) > maxAllowedExposureTime) ? maxAllowedExposureTime : this->maxExposureTime_*100.0;
+        // Convert milliseconds to microseconds (multiply by 1000 not 100)
+        const double maxExposureTime = ((this->maxExposureTime_*1000.0) > maxAllowedExposureTime) ? 
+                                        maxAllowedExposureTime : this->maxExposureTime_*1000.0;
 
         Spinnaker::GenApi::CFloatPtr ptrMaxExposureTime = nodeMap.GetNode("AutoExposureExposureTimeUpperLimit");
-        if (Spinnaker::GenApi::IsReadable(ptrMaxExposureTime) && Spinnaker::GenApi::IsWritable(ptrMaxExposureTime)){
+        if (Spinnaker::GenApi::IsReadable(ptrMaxExposureTime) && Spinnaker::GenApi::IsWritable(ptrMaxExposureTime)) {
             ptrMaxExposureTime->SetValue(maxExposureTime);
+            ROS_INFO("Set max exposure time to %f microseconds", maxExposureTime);
         }
         else
             ROS_ERROR("Failed to set upperLimit for auto exposure");
 
     }
-    else{
+    else {
+        // First turn off auto exposure
+        Spinnaker::GenApi::CEnumerationPtr ptrExposureAuto = nodeMap.GetNode("ExposureAuto");
+        if (Spinnaker::GenApi::IsReadable(ptrExposureAuto) && Spinnaker::GenApi::IsWritable(ptrExposureAuto)) {
+            Spinnaker::GenApi::CEnumEntryPtr ptrExposureAutoOff = ptrExposureAuto->GetEntryByName("Off");
+            if(Spinnaker::GenApi::IsReadable(ptrExposureAutoOff)) {
+                ptrExposureAuto->SetIntValue(ptrExposureAutoOff->GetValue());
+                ROS_INFO("Turned off auto exposure");
+            }
+        }
 
+        // Then set manual exposure
         Spinnaker::GenApi::CFloatPtr ptrExposureTime = nodeMap.GetNode("ExposureTime");
+        if (!Spinnaker::GenApi::IsReadable(ptrExposureTime) || !Spinnaker::GenApi::IsWritable(ptrExposureTime)) {
+            ROS_ERROR("Failed to access exposure time node");
+            return;
+        }
+        
         const double maxAllowedExposureTime = ptrExposureTime->GetMax();
-        const double exposureTime = ((this->exposureTime_*100.0) > maxAllowedExposureTime) ? maxAllowedExposureTime : this->exposureTime_*100.0;
-        if (Spinnaker::GenApi::IsReadable(ptrExposureTime) && Spinnaker::GenApi::IsWritable(ptrExposureTime))
-            ptrExposureTime->SetValue(exposureTime);
-        else
-            ROS_ERROR("Failed to set exposure value to %f",exposureTime);
+        // Convert milliseconds to microseconds (multiply by 1000 not 100)
+        const double exposureTime = ((this->exposureTime_*1000.0) > maxAllowedExposureTime) ? 
+                                    maxAllowedExposureTime : this->exposureTime_*1000.0;
+        
+        ptrExposureTime->SetValue(exposureTime);
+        ROS_INFO("Set manual exposure time to %f microseconds", exposureTime);
     }
 }
-
 void flirROS::setPixelFormat(){
     
 }
+
+void flirROS::setGain() {
+    auto& nodeMap = camera_->GetNodeMap();
+    Spinnaker::GenApi::CFloatPtr ptrGain = nodeMap.GetNode("Gain");
+    if (Spinnaker::GenApi::IsReadable(ptrGain) && Spinnaker::GenApi::IsWritable(ptrGain)) {
+        double clampedGain = std::min(std::max(this->gain_, ptrGain->GetMin()), ptrGain->GetMax());
+        ptrGain->SetValue(clampedGain);
+    } else {
+        ROS_ERROR("Failed to set gain.");
+    }
+}
+
